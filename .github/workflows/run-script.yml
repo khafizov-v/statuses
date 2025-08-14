@@ -1,0 +1,38 @@
+name: Run Script at 18:00 MSK
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch: 
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Run Python script
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_GH_TOKEN }}
+          GITHUB_ORG: ${{ secrets.MY_GH_ORG }}
+          GITHUB_PROJECT_NUMBER: ${{ secrets.MY_GH_PROJECT_NUMBER }}
+          GITHUB_COLUMNS: ${{ secrets.MY_GH_COLUMNS }}
+          OUTPUT_FILE: ${{ secrets.MY_OUTPUT_FILE }}
+        run: python main.py
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: |
+            *.json
+            *.md
