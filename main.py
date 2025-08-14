@@ -1,4 +1,5 @@
 import os
+import sys
 
 def resource_path(path):
     if hasattr(sys, '_MEIPASS'): 
