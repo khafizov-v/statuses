@@ -22,11 +22,14 @@ jobs:
       
       - name: Run Python script
         env:
-          GITHUB_TOKEN: ${{ secrets.MY_GH_TOKEN }}
-          GITHUB_ORG: ${{ secrets.MY_GH_ORG }}
-          GITHUB_PROJECT_NUMBER: ${{ secrets.MY_GH_PROJECT_NUMBER }}
-          GITHUB_COLUMNS: ${{ secrets.MY_GH_COLUMNS }}
+          MY_GH_TOKEN: ${{ secrets.MY_GH_TOKEN }}
+          MY_GH_ORG: ${{ secrets.MY_GH_ORG }}
+          MY_GH_PROJECT_NUMBER: ${{ secrets.MY_GH_PROJECT_NUMBER }}
+          MY_GH_PROJECT_INCIDENT_NUMBER: ${{ secrets.MY_GH_PROJECT_INCIDENT_NUMBER }}
+          MY_GH_COLUMNS: ${{ secrets.MY_GH_COLUMNS }}
           OUTPUT_FILE: ${{ secrets.MY_OUTPUT_FILE }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
       
       - name: Upload results
