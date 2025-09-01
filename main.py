@@ -13,11 +13,11 @@ from dotenv import load_dotenv
 
 load_dotenv(resource_path(".env"))
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-ORG = os.getenv("GITHUB_ORG")  # Organization name
-PROJECT_NUMBER = int(os.getenv("GITHUB_PROJECT_NUMBER"))
-INCIDENT_PROJECT_NUMBER = int(os.getenv("GITHUB_PROJECT_INCIDENT_NUMBER")) if os.getenv("GITHUB_PROJECT_INCIDENT_NUMBER") else None
-COLUMN_NAMES = [name.strip() for name in os.getenv("GITHUB_COLUMNS").split(",")]
+GITHUB_TOKEN = os.getenv("MY_GH_TOKEN")
+ORG = os.getenv("MY_GH_ORG")  # Organization name
+PROJECT_NUMBER = int(os.getenv("MY_GH_PROJECT_NUMBER"))
+INCIDENT_PROJECT_NUMBER = int(os.getenv("MY_GH_PROJECT_INCIDENT_NUMBER")) if os.getenv("MY_GH_PROJECT_INCIDENT_NUMBER") else None
+COLUMN_NAMES = [name.strip() for name in os.getenv("MY_GH_COLUMNS").split(",")]
 OUTPUT_FILE = os.getenv("OUTPUT_FILE", "comments.json")
 
 # Telegram configuration
