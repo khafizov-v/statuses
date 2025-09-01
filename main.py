@@ -16,8 +16,13 @@ load_dotenv(resource_path(".env"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 ORG = os.getenv("GITHUB_ORG")  # Organization name
 PROJECT_NUMBER = int(os.getenv("GITHUB_PROJECT_NUMBER"))
+INCIDENT_PROJECT_NUMBER = int(os.getenv("GITHUB_PROJECT_INCIDENT_NUMBER")) if os.getenv("GITHUB_PROJECT_INCIDENT_NUMBER") else None
 COLUMN_NAMES = [name.strip() for name in os.getenv("GITHUB_COLUMNS").split(",")]
 OUTPUT_FILE = os.getenv("OUTPUT_FILE", "comments.json")
+
+# Telegram configuration
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 HEADERS = {
     "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -26,6 +31,7 @@ HEADERS = {
 
 GRAPHQL_URL = "https://api.github.com/graphql"
 YESTERDAY = datetime.now(timezone.utc) - timedelta(days=1)
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage" if TELEGRAM_BOT_TOKEN else None
 
 
 def run_query(query, variables):
@@ -39,7 +45,8 @@ def run_query(query, variables):
     return data
 
 
-def get_project_id():
+def get_project_id_by_number(project_number):
+    """Get project ID by project number"""
     query = """
     query($org: String!, $number: Int!) {
       organization(login: $org) {
@@ -49,7 +56,7 @@ def get_project_id():
       }
     }
     """
-    variables = {"org": ORG, "number": PROJECT_NUMBER}
+    variables = {"org": ORG, "number": project_number}
     data = run_query(query, variables)
 
     org_data = data.get("data", {}).get("organization")
@@ -57,8 +64,96 @@ def get_project_id():
         raise Exception(f"Organization '{ORG}' not found.")
     project = org_data.get("projectV2")
     if not project:
-        raise Exception(f"Project number {PROJECT_NUMBER} not found in organization '{ORG}'.")
+        raise Exception(f"Project number {project_number} not found in organization '{ORG}'.")
     return project["id"]
+
+
+def get_project_id():
+    return get_project_id_by_number(PROJECT_NUMBER)
+
+
+def get_incidents(incident_project_id):
+    """Get incidents from the incident project"""
+    if not incident_project_id:
+        return []
+    
+    incidents = []
+    cursor = None
+    has_next_page = True
+
+    while has_next_page:
+        query = """
+        query($projectId: ID!, $cursor: String) {
+          node(id: $projectId) {
+            ... on ProjectV2 {
+              items(first: 100, after: $cursor) {
+                nodes {
+                  content {
+                    __typename
+                    ... on Issue {
+                      id
+                      number
+                      url
+                      title
+                      body
+                      state
+                      createdAt
+                      updatedAt
+                      labels(first: 100) {
+                        nodes {
+                          name
+                        }
+                      }
+                      assignees(first: 100) {
+                        nodes {
+                          login
+                        }
+                      }
+                      comments(last: 100) {
+                        nodes {
+                          body
+                          createdAt
+                          author {
+                            login
+                          }
+                        }
+                      }
+                    }
+                  }
+                  fieldValues(first: 100) {
+                    nodes {
+                      ... on ProjectV2ItemFieldSingleSelectValue {
+                        name
+                      }
+                      ... on ProjectV2ItemFieldTextValue {
+                        text
+                      }
+                    }
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }
+        }
+        """
+        variables = {"projectId": incident_project_id, "cursor": cursor}
+        data = run_query(query, variables)
+        items_data = data["data"]["node"]["items"]
+
+        for item in items_data["nodes"]:
+            content = item.get("content")
+            if content and content.get("__typename") == "Issue":
+                incidents.append(content)
+
+        page = items_data["pageInfo"]
+        has_next_page = page["hasNextPage"]
+        cursor = page["endCursor"]
+
+    return incidents
 
 
 def get_items_with_status(project_id):
@@ -80,7 +175,7 @@ def get_items_with_status(project_id):
                       number
                       url
                       title
-                      comments(last: 20) {
+                      comments(last: 100) {
                         nodes {
                           body
                           createdAt
@@ -89,7 +184,7 @@ def get_items_with_status(project_id):
                           }
                         }
                       }
-                      issueTimeline: timelineItems(itemTypes: [CONNECTED_EVENT], last: 10) {
+                      issueTimeline: timelineItems(itemTypes: [CONNECTED_EVENT], last: 100) {
                         nodes {
                           ... on ConnectedEvent {
                             subject {
@@ -98,7 +193,7 @@ def get_items_with_status(project_id):
                                 id
                                 url
                                 title
-                                labels(first: 10) {
+                                labels(first: 100) {
                                   nodes {
                                     name
                                   }
@@ -110,7 +205,7 @@ def get_items_with_status(project_id):
                       }
                     }
                   }
-                  fieldValues(first: 10) {
+                  fieldValues(first: 100) {
                     nodes {
                       ... on ProjectV2ItemFieldSingleSelectValue {
                         name
@@ -137,8 +232,14 @@ def get_items_with_status(project_id):
                 if field and "name" in field:
                     status = field["name"]
             content = item.get("content")
+            
+            # Debug: print item info
+            if content and content.get("__typename") == "Issue":
+                print(f"   Issue: {content['title']} | Status: {status}")
+                
             if status in COLUMN_NAMES and content and content.get("__typename") == "Issue":
                 items.append(content)
+                print(f"     [OK] Added to results (status matches)")
 
         page = items_data["pageInfo"]
         has_next_page = page["hasNextPage"]
@@ -159,7 +260,7 @@ def get_all_org_prs():
         query = """
         query($org: String!, $cursor: String) {
           organization(login: $org) {
-            repositories(first: 50, after: $cursor) {
+            repositories(first: 100, after: $cursor) {
               nodes {
                 pullRequests(states: [OPEN], last: 20) {
                   nodes {
@@ -182,7 +283,7 @@ def get_all_org_prs():
                         }
                       }
                     }
-                    reviews(last: 20) {
+                    reviews(last: 10) {
                       nodes {
                         body
                         state
@@ -190,7 +291,7 @@ def get_all_org_prs():
                         author {
                           login
                         }
-                        comments(last: 10) {
+                        comments(last: 5) {
                           nodes {
                             body
                             createdAt
@@ -276,7 +377,7 @@ def is_pr_sent_for_review_recently(pr):
     """
     Check if PR had REVIEW_REQUESTED_EVENT in the last 24 hours
     """
-    print(f"🔍 Checking PR: {pr['title']} (#{pr['number']})")
+    print(f"[FETCH] Checking PR: {pr['title']} (#{pr['number']})")
     timeline = pr.get("timelineItems", {}).get("nodes", [])
     print(f"  Timeline events: {len(timeline)}")
     
@@ -284,18 +385,19 @@ def is_pr_sent_for_review_recently(pr):
         created_at = datetime.fromisoformat(event["createdAt"].replace("Z", "+00:00"))
         print(f"  Event at: {created_at} (cutoff: {YESTERDAY})")
         if created_at > YESTERDAY:
-            print(f"  ✅ Found recent review request!")
+            print(f"  [OK] Found recent review request!")
             return True
     
-    print(f"  ❌ No recent review requests found")
+    print(f"  [ERROR] No recent review requests found")
     return False
 
 
-def collect_recent_comments_and_prs(issues, all_prs):
+def collect_recent_comments_and_prs(issues, all_prs, incidents=None):
     recent_comments = []
     recent_prs = []
+    recent_incidents = []
     
-    print(f"📊 Analyzing {len(issues)} issues from project")
+    print(f"[RESULT] Analyzing {len(issues)} issues from project")
     
     # Process issues from project
     for item in issues:
@@ -315,11 +417,11 @@ def collect_recent_comments_and_prs(issues, all_prs):
                         "body": comment["body"]
                     })
     
-    print(f"📊 Analyzing {len(all_prs)} PRs from organization")
+    print(f"[RESULT] Analyzing {len(all_prs)} PRs from organization")
     
     # Process all PRs from organization
     for pr in all_prs:
-        print(f"🔍 Found PR: {pr['title']} (#{pr['number']}) - State: {pr['state']}")
+        print(f"[FETCH] Found PR: {pr['title']} (#{pr['number']}) - State: {pr['state']}")
         # Check if PR was sent for review recently
         if is_pr_sent_for_review_recently(pr):
             # Get reviewers (only users, no teams)
@@ -379,11 +481,185 @@ def collect_recent_comments_and_prs(issues, all_prs):
                 "review_comments": review_comments
             })
     
-    return recent_comments, recent_prs
+    # Process incidents
+    if incidents:
+        print(f"[RESULT] Analyzing {len(incidents)} incidents")
+        for incident in incidents:
+            # Check for recent activity (comments or updates)
+            has_recent_activity = False
+            
+            # Check for recent comments
+            recent_comments_count = 0
+            incident_comments = []
+            for comment in incident["comments"]["nodes"]:
+                created_at = datetime.fromisoformat(comment["createdAt"].replace("Z", "+00:00"))
+                is_recent = created_at > YESTERDAY
+                if is_recent:
+                    recent_comments_count += 1
+                    has_recent_activity = True
+                incident_comments.append({
+                    "author": comment["author"]["login"] if comment["author"] else "unknown",
+                    "created_at": comment["createdAt"],
+                    "body": comment["body"],
+                    "is_recent": is_recent
+                })
+            
+            # Check if incident was updated recently
+            updated_at = datetime.fromisoformat(incident["updatedAt"].replace("Z", "+00:00"))
+            if updated_at > YESTERDAY:
+                has_recent_activity = True
+            
+            # Only include incidents with recent activity
+            if has_recent_activity:
+                labels = [label["name"] for label in incident.get("labels", {}).get("nodes", [])]
+                assignees = [assignee["login"] for assignee in incident.get("assignees", {}).get("nodes", [])]
+                
+                recent_incidents.append({
+                    "type": "incident",
+                    "incident_url": incident["url"],
+                    "incident_title": incident["title"],
+                    "incident_number": incident["number"],
+                    "state": incident["state"],
+                    "body": incident.get("body", ""),
+                    "created_at": incident["createdAt"],
+                    "updated_at": incident["updatedAt"],
+                    "labels": labels,
+                    "assignees": assignees,
+                    "comments": incident_comments,
+                    "recent_comments_count": recent_comments_count
+                })
+    
+    return recent_comments, recent_prs, recent_incidents
 
 
-def save_to_md(comments, prs, output_file):
+def format_telegram_message(comments, prs, incidents):
+    """Format a concise report for Telegram"""
+    lines = ["*GitHub Activity Report*"]
+    lines.append(f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append("")
+    
+    # Incidents summary
+    if incidents:
+        lines.append(f"[INCIDENT] *Incidents:* {len(incidents)} with recent activity")
+        for incident in incidents:  # Show all incidents
+            state_emoji = "[OPEN]" if incident['state'] == "OPEN" else "[CLOSED]"
+            lines.append(f"  {state_emoji} [{incident['incident_title']}]({incident['incident_url']})")
+            if incident['recent_comments_count'] > 0:
+                lines.append(f"    {incident['recent_comments_count']} new comments")
+        lines.append("")
+    
+    # PRs summary
+    if prs:
+        lines.append(f"*Pull Requests:* {len(prs)} sent for review")
+        for pr in prs:  # Show all PRs
+            draft_emoji = "[DRAFT]" if pr['is_draft'] else "[PR]"
+            lines.append(f"  {draft_emoji} [{pr['pr_title']}]({pr['pr_url']})")
+            if pr['reviewers']:
+                lines.append(f"    Reviewers: {', '.join(pr['reviewers'])}")
+        lines.append("")
+    
+    # Comments summary
+    if comments:
+        lines.append(f"*Issue Comments:* {len(comments)} new")
+        lines.append("")
+    
+    if not incidents and not prs and not comments:
+        lines.append("No recent activity in the last 24 hours")
+    
+    return "\n".join(lines)
+
+
+def send_telegram_message(message):
+    """Send message to Telegram bot"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[WARN] Telegram bot token or chat ID not configured, skipping notification")
+        return False
+    
+    try:
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        
+        response = requests.post(TELEGRAM_API_URL, json=payload)
+        
+        if response.status_code == 200:
+            print("[OK] Report sent to Telegram successfully")
+            return True
+        else:
+            print(f"[ERROR] Failed to send Telegram message: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"[ERROR] Error sending Telegram message: {str(e)}")
+        return False
+
+
+def send_telegram_file(file_path, caption=None):
+    """Send file to Telegram bot"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[WARN] Telegram bot token or chat ID not configured, skipping file upload")
+        return False
+    
+    try:
+        telegram_file_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        
+        with open(file_path, 'rb') as file:
+            files = {'document': file}
+            data = {
+                'chat_id': TELEGRAM_CHAT_ID,
+            }
+            if caption:
+                data['caption'] = caption
+                data['parse_mode'] = 'Markdown'
+            
+            response = requests.post(telegram_file_url, files=files, data=data)
+        
+        if response.status_code == 200:
+            print(f"[OK] File {file_path} sent to Telegram successfully")
+            return True
+        else:
+            print(f"[ERROR] Failed to send Telegram file: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"[ERROR] Error sending Telegram file: {str(e)}")
+        return False
+
+
+def save_to_md(comments, prs, incidents, output_file):
     lines = ["# GitHub Activity Report - Last 24 Hours\n"]
+
+    # Incidents section
+    lines.append("## Incidents\n")
+    if not incidents:
+        lines.append("No incidents with recent activity in the last 24 hours.\n")
+    else:
+        for incident in incidents:
+            lines.append(f"### [{incident['incident_title']}]({incident['incident_url']}) (#{incident['incident_number']})")
+            lines.append(f"- **State:** {incident['state']}")
+            lines.append(f"- **Created:** {incident['created_at']}")
+            lines.append(f"- **Updated:** {incident['updated_at']}")
+            if incident['assignees']:
+                lines.append(f"- **Assignees:** {', '.join(incident['assignees'])}")
+            if incident['labels']:
+                lines.append(f"- **Labels:** {', '.join(incident['labels'])}")
+            lines.append(f"- **Recent Comments:** {incident['recent_comments_count']}")
+            
+            if incident['body']:
+                lines.append("\n**Description:**")
+                description = incident['body'].strip().replace("\r\n", "\n").replace("\n", "\n> ")
+                lines.append(f"> {description}")
+            
+            if incident['comments']:
+                lines.append("\n**Recent Comments:**")
+                for comment in incident['comments']:
+                    if comment['is_recent']:
+                        lines.append(f"- **{comment['author']}** ({comment['created_at']}) 🆕")
+                        comment_body = comment['body'].strip().replace("\r\n", "\n").replace("\n", "\n  > ")
+                        lines.append(f"  > {comment_body}")
+            
+            lines.append("\n---\n")
 
     # Pull Requests section
     lines.append("## Pull Requests Sent for Review\n")
@@ -451,35 +727,102 @@ def save_to_md(comments, prs, output_file):
 
 
 def main():
-    print("🔍 Fetching Project ID...")
+    print(f"[CONFIG] Configuration:")
+    print(f"   GitHub Org: {ORG}")
+    print(f"   Project Number: {PROJECT_NUMBER}")
+    print(f"   Incident Project: {INCIDENT_PROJECT_NUMBER}")
+    print(f"   Column Names: {COLUMN_NAMES}")
+    print(f"   Telegram Bot Token: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
+    print(f"   Telegram Chat ID: {'SET' if TELEGRAM_CHAT_ID else 'MISSING'}")
+    print()
+    
+    print("[FETCH] Fetching Project ID...")
     project_id = get_project_id()
-    print("📦 Loading issues with statuses:", COLUMN_NAMES)
+    print(f"   Project ID: {project_id}")
+    print("[LOAD] Loading issues with statuses:", COLUMN_NAMES)
     issues = get_items_with_status(project_id)
-    print(f"🔎 Found {len(issues)} issues in project")
+    print(f"[FOUND] Found {len(issues)} issues in project")
 
-    print("🚀 Loading all PRs from organization...")
+    print("[GET] Loading all PRs from organization...")
     all_prs = get_all_org_prs()
-    print(f"🔎 Found {len(all_prs)} PRs in organization")
+    print(f"[FOUND] Found {len(all_prs)} PRs in organization")
 
-    print("🗨️ Collecting comments and PRs from the last 24 hours...")
-    comments, prs = collect_recent_comments_and_prs(issues, all_prs)
+    # Load incidents if project number is configured
+    incidents = []
+    if INCIDENT_PROJECT_NUMBER:
+        print(f"[INCIDENT] Loading incidents from project {INCIDENT_PROJECT_NUMBER}...")
+        try:
+            incident_project_id = get_project_id_by_number(INCIDENT_PROJECT_NUMBER)
+            print(f"   Incident Project ID: {incident_project_id}")
+            incidents = get_incidents(incident_project_id)
+            print(f"[FOUND] Found {len(incidents)} incidents")
+        except Exception as e:
+            print(f"[ERROR] Error loading incidents: {e}")
+    else:
+        print("[WARN] No incident project configured")
+
+    print("[COLLECT] Collecting comments, PRs, and incidents from the last 24 hours...")
+    print(f"   Cutoff time (yesterday): {YESTERDAY}")
+    comments, prs, recent_incidents = collect_recent_comments_and_prs(issues, all_prs, incidents)
+    
+    print(f"[RESULT] Final Results:")
+    print(f"   Recent comments: {len(comments)}")
+    print(f"   Recent PRs: {len(prs)}")
+    print(f"   Recent incidents: {len(recent_incidents)}")
+    
+    if len(comments) == 0 and len(prs) == 0 and len(recent_incidents) == 0:
+        print("[WARN] No recent activity found - this might indicate:")
+        print("   - No activity in the last 24 hours")
+        print("   - Issues not in the configured columns")
+        print("   - Organization/project configuration issues")
+        print("   - API permission issues")
 
     # Combine all data for JSON output
     all_data = {
         "recent_comments": comments,
         "recent_pull_requests": prs,
+        "recent_incidents": recent_incidents,
         "generated_at": datetime.now(timezone.utc).isoformat()
     }
 
     # Save JSON
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False, indent=2)
-    print(f"✅ Saved {len(comments)} comments and {len(prs)} PRs to {OUTPUT_FILE}")
+    print(f"[OK] Saved {len(comments)} comments, {len(prs)} PRs, and {len(recent_incidents)} incidents to {OUTPUT_FILE}")
 
     # Save MD
     md_output_file = OUTPUT_FILE.rsplit(".", 1)[0] + ".md"
-    save_to_md(comments, prs, md_output_file)
-    print(f"✅ Saved report to {md_output_file}")
+    save_to_md(comments, prs, recent_incidents, md_output_file)
+    print(f"[OK] Saved report to {md_output_file}")
+
+    # Send Telegram notification
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        print("[TELEGRAM] Sending report to Telegram...")
+        print(f"   Bot token: {TELEGRAM_BOT_TOKEN[:10]}...")
+        print(f"   Chat ID: {TELEGRAM_CHAT_ID}")
+        
+        # Send summary message
+        telegram_message = format_telegram_message(comments, prs, recent_incidents)
+        print(f"   Message length: {len(telegram_message)} characters")
+        message_success = send_telegram_message(telegram_message)
+        
+        # Send MD file
+        print(f"   Sending MD file: {md_output_file}")
+        file_caption = f"GitHub Activity Report - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+        file_success = send_telegram_file(md_output_file, file_caption)
+        
+        if not message_success and not file_success:
+            print("[ERROR] Failed to send both Telegram message and file")
+        elif not message_success:
+            print("[ERROR] Failed to send Telegram message but file sent successfully")
+        elif not file_success:
+            print("[ERROR] Failed to send Telegram file but message sent successfully")
+        else:
+            print("[OK] Both Telegram message and file sent successfully")
+    else:
+        print("[WARN] Telegram configuration missing, skipping notification")
+        print(f"   Bot token present: {bool(TELEGRAM_BOT_TOKEN)}")
+        print(f"   Chat ID present: {bool(TELEGRAM_CHAT_ID)}")
 
 
 if __name__ == "__main__":
