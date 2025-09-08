@@ -352,24 +352,81 @@ def get_all_org_prs():
     return prs
 
 
+def get_parent_issue_via_rest_api(issue_url):
+    """
+    Use REST API to get parent issue of a sub-issue directly.
+    Returns parent issue data or None if no parent found.
+    """
+    try:
+        # Extract owner, repo, and issue number from URL
+        # URL format: https://github.com/owner/repo/issues/123
+        parts = issue_url.replace("https://github.com/", "").split("/")
+        if len(parts) >= 4 and parts[2] == "issues":
+            owner, repo, _, issue_number = parts[0], parts[1], parts[2], parts[3]
+            
+            # Use GitHub REST API direct parent endpoint
+            parent_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/parent"
+            response = requests.get(parent_url, headers=HEADERS)
+            
+            if response.status_code == 200:
+                return response.json()
+                                
+    except Exception as e:
+        print(f"Error getting parent issue via REST API: {e}")
+        
+    return None
+
+
 def find_case_parent(issue):
     """
-    Recursively find parent Issue labeled 'Case'.
+    Recursively find parent Issue with type 'Case'.
     If current issue is a Case itself, return it.
+    Uses REST API to traverse up the parent hierarchy until Case is found.
     """
-    # Check if this issue is a Case by label
+    # Check if this issue is a Case by type (first check type, fallback to labels for backwards compatibility)
+    issue_type = issue.get("type", {}).get("name", "").lower() if issue.get("type") else None
+    if issue_type == "case":
+        return issue
+    
+    # Fallback: Check if this issue is a Case by label (backwards compatibility)
     labels = issue.get("labels", {}).get("nodes", [])
     if any(label["name"].lower() == "case" for label in labels):
         return issue
 
-    # Try to find a parent from timeline connected events
-    timeline = issue.get("issueTimeline", {}).get("nodes", [])
-    for event in timeline:
-        parent = event.get("subject")
-        if parent and parent.get("__typename") == "Issue":
-            parent_case = find_case_parent(parent)
-            if parent_case:
-                return parent_case
+    # Get parent issue using REST API
+    issue_url = issue.get("url")
+    if issue_url:
+        parent_issue_data = get_parent_issue_via_rest_api(issue_url)
+        if parent_issue_data:
+            # Check if parent is a Case by type
+            parent_type = parent_issue_data.get("type", {}).get("name", "").lower() if parent_issue_data.get("type") else None
+            if parent_type == "case":
+                return {
+                    "title": parent_issue_data["title"],
+                    "url": parent_issue_data["html_url"],
+                    "type": parent_issue_data.get("type"),
+                    "labels": {"nodes": [{"name": label["name"]} for label in parent_issue_data.get("labels", [])]}
+                }
+            
+            # Fallback: Check if parent is a Case by label
+            parent_labels = parent_issue_data.get("labels", [])
+            if any(label["name"].lower() == "case" for label in parent_labels):
+                return {
+                    "title": parent_issue_data["title"],
+                    "url": parent_issue_data["html_url"],
+                    "type": parent_issue_data.get("type"),
+                    "labels": {"nodes": [{"name": label["name"]} for label in parent_labels]}
+                }
+            
+            # If parent is not a Case, recursively search its parent
+            converted_parent = {
+                "title": parent_issue_data["title"],
+                "url": parent_issue_data["html_url"],
+                "type": parent_issue_data.get("type"),
+                "labels": {"nodes": [{"name": label["name"]} for label in parent_labels]}
+            }
+            return find_case_parent(converted_parent)
+    
     return None
 
 
