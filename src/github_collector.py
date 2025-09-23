@@ -363,6 +363,87 @@ class GitHubCollector:
 
         return project_issues
 
+    def get_parent_issue_via_rest_api(self, issue_url: str) -> Optional[Dict]:
+        """
+        Use REST API to get parent issue of a sub-issue directly.
+        Returns parent issue data or None if no parent found.
+        """
+        try:
+            # Extract owner, repo, and issue number from URL
+            # URL format: https://github.com/owner/repo/issues/123
+            parts = issue_url.replace("https://github.com/", "").split("/")
+            if len(parts) >= 4 and parts[2] == "issues":
+                owner, repo, _, issue_number = parts[0], parts[1], parts[2], parts[3]
+
+                # Use GitHub REST API direct parent endpoint
+                parent_url = f"{self.base_url}/repos/{owner}/{repo}/issues/{issue_number}/parent"
+                response = requests.get(parent_url, headers=self.config.headers)
+
+                if response.status_code == 200:
+                    return response.json()
+
+        except Exception as e:
+            print(f"Error getting parent issue via REST API: {e}")
+
+        return None
+
+    def find_case_parent(self, issue: Dict, max_depth: int = 10) -> Optional[Dict]:
+        """
+        Recursively find parent Issue with 'Case' label.
+        If current issue is a Case itself, return it.
+        Uses REST API to traverse up the parent hierarchy until Case is found.
+        """
+        if max_depth <= 0:
+            return None
+
+        # Check if this issue is a Case by type
+        issue_type = issue.get("type", {}).get("name", "").lower() if issue.get("type") else None
+        if issue_type == "case":
+            return issue
+
+        # Fallback: Check if this issue is a Case by label (backwards compatibility)
+        labels = issue.get("labels", [])
+        if isinstance(labels, dict) and "nodes" in labels:
+            labels = labels["nodes"]
+        if any(label.get("name", "").lower() == "case" for label in labels):
+            return issue
+
+        # Get parent issue using REST API
+        issue_url = issue.get("url")
+        if issue_url:
+            parent_issue_data = self.get_parent_issue_via_rest_api(issue_url)
+            if parent_issue_data:
+                # Check if parent is a Case by type
+                parent_type = parent_issue_data.get("type", {}).get("name", "").lower() if parent_issue_data.get("type") else None
+                if parent_type == "case":
+                    return {
+                        "title": parent_issue_data["title"],
+                        "url": parent_issue_data["html_url"],
+                        "type": parent_issue_data.get("type"),
+                        "labels": [{"name": label["name"]} for label in parent_issue_data.get("labels", [])]
+                    }
+
+                # Fallback: Check if parent is a Case by label
+                parent_labels = parent_issue_data.get("labels", [])
+                if any(label["name"].lower() == "case" for label in parent_labels):
+                    return {
+                        "title": parent_issue_data["title"],
+                        "url": parent_issue_data["html_url"],
+                        "type": parent_issue_data.get("type"),
+                        "labels": [{"name": label["name"]} for label in parent_labels]
+                    }
+
+                # If parent is not a Case, recursively search its parent
+                converted_parent = {
+                    "title": parent_issue_data["title"],
+                    "url": parent_issue_data["html_url"],
+                    "type": parent_issue_data.get("type"),
+                    "labels": [{"name": label["name"]} for label in parent_labels]
+                }
+                return self.find_case_parent(converted_parent, max_depth - 1)
+
+        return None
+
     def get_issues_for_period(self, days_back: int = 1) -> Dict[str, List[Dict]]:
         """Collect issues and their comments for the specified period"""
         since_date = datetime.now(timezone.utc) - timedelta(days=days_back)

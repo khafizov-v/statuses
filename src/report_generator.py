@@ -154,7 +154,7 @@ class ReportGenerator:
         if not issues_data or not any(issues_data.values()):
             return ""
 
-        # Group issues by case/project (using labels or repository)
+        # Group issues by case/project using parent case detection
         cases = {}
 
         for repo, issues in issues_data.items():
@@ -162,23 +162,32 @@ class ReportGenerator:
                 if not issue["comments"]:
                     continue
 
-                # Determine case name (use first label or repository name)
-                case_name = repo
-                if issue["labels"]:
-                    # Look for case-related labels
-                    case_labels = [label for label in issue["labels"] if
-                                 "case" in label.lower() or "project" in label.lower()]
-                    if case_labels:
-                        case_name = case_labels[0]
+                # First try to find parent case using the collector's logic
+                import sys
+                from pathlib import Path
+                sys.path.insert(0, str(Path(__file__).parent))
+                from github_collector import GitHubCollector
+                collector = GitHubCollector(self.config)
+                parent_case = collector.find_case_parent(issue)
 
-                if case_name not in cases:
-                    cases[case_name] = []
-                cases[case_name].append(issue)
+                if parent_case:
+                    case_name = parent_case["title"]
+                    case_url = parent_case["url"]
+                    case_key = f"[{case_name}]({case_url})"
+
+                    if case_key not in cases:
+                        cases[case_key] = []
+                    cases[case_key].append(issue)
+                # If no parent case found, don't include this issue in any case section
 
         # Generate sections for each case
         sections = []
-        for case_name, case_issues in cases.items():
-            section = f"## Case: {case_name}\n\n"
+        for case_key, case_issues in cases.items():
+            # Case key is either "[Case Name](url)" or just repo name
+            if case_key.startswith("[") and "](" in case_key:
+                section = f"## {case_key}\n\n"
+            else:
+                section = f"## Case: {case_key}\n\n"
 
             for issue in case_issues:
                 # Get assignee names
