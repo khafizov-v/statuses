@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+
+import sys
+import argparse
+from pathlib import Path
+from datetime import datetime
+
+# Add src directory to path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from config import Config
+from github_collector import GitHubCollector
+from report_generator import ReportGenerator
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate status reports from GitHub activity")
+    parser.add_argument("--days", type=int, default=1,
+                       help="Number of days back to collect data (default: 1)")
+    parser.add_argument("--output", type=str,
+                       help="Output filename (default: auto-generated)")
+    parser.add_argument("--telegram", action="store_true",
+                       help="Send report to Telegram")
+    parser.add_argument("--dry-run", action="store_true",
+                       help="Print report to console without saving")
+
+    args = parser.parse_args()
+
+    try:
+        # Initialize configuration
+        print("Loading configuration...")
+        config = Config()
+
+        # Initialize collector and generator
+        print("Initializing GitHub collector...")
+        collector = GitHubCollector(config)
+
+        print("Initializing report generator...")
+        generator = ReportGenerator(config)
+
+        # Collect data
+        print(f"Collecting data for the last {args.days} day(s)...")
+
+        print("- Collecting commits...")
+        commits_data = collector.get_commits_for_period(args.days)
+
+        print("- Collecting pull requests...")
+        prs_data = collector.get_pull_requests_for_period(args.days)
+
+        print("- Collecting issues...")
+        issues_data = collector.get_issues_for_period(args.days)
+
+        # Generate report
+        print("Generating report...")
+        report_content = generator.generate_report(commits_data, prs_data, issues_data)
+
+        # Output results
+        if args.dry_run:
+            print("\n" + "="*80)
+            print("GENERATED REPORT:")
+            print("="*80)
+            print(report_content)
+            print("="*80)
+        else:
+            # Save report
+            output_path = generator.save_report(report_content, args.output)
+            print(f"Report saved to: {output_path}")
+
+            # Send to Telegram if requested
+            if args.telegram or config.settings["output_settings"]["send_telegram"]:
+                print("Sending report to Telegram...")
+                if generator.send_to_telegram(report_content):
+                    print("Report sent to Telegram successfully!")
+                else:
+                    print("Failed to send report to Telegram")
+
+        # Print summary
+        total_commits = sum(len(commits) for commits in commits_data.values())
+        total_prs = sum(len(prs) for prs in prs_data.values())
+        total_issues = sum(len(issues) for issues in issues_data.values())
+
+        print(f"\nSummary:")
+        print(f"- Commits collected: {total_commits}")
+        print(f"- Pull requests with comments: {total_prs}")
+        print(f"- Issues with comments: {total_issues}")
+        # Count repositories checked
+        if config.repositories is None:
+            # Get count from collector when using org mode
+            repo_count = len(collector.get_org_repositories())
+        else:
+            repo_count = len(config.repositories)
+        print(f"- Repositories checked: {repo_count}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

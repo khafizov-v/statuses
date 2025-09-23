@@ -1,0 +1,26 @@
+{
+    "report_format": {
+        "date_format": "%B %d, %Y",
+        "max_commits_shown": 5,
+        "include_pr_section": true,
+        "include_case_sections": true
+    },
+    "github_api": {
+        "base_url": "https://api.github.com",
+        "graphql_url": "https://api.github.com/graphql",
+        "per_page": 100,
+        "rate_limit_buffer": 10
+    },
+    "collection_settings": {
+        "collect_commits": true,
+        "collect_pr_comments": true,
+        "collect_issue_comments": true,
+        "exclude_bot_comments": true,
+        "exclude_automated_commits": false
+    },
+    "output_settings": {
+        "generate_markdown": true,
+        "generate_json": false,
+        "send_telegram": false
+    }
+}
