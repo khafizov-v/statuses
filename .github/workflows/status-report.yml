@@ -1,0 +1,43 @@
+name: Run Status Bot at 18:00 MSK
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Status Bot
+        env:
+          MY_GH_TOKEN: ${{ secrets.MY_GH_TOKEN }}
+          MY_GH_OWNER: ${{ secrets.MY_GH_OWNER }}
+          MY_GH_ORG: ${{ secrets.MY_GH_ORG }}
+          MY_GH_REPO: ${{ secrets.MY_GH_REPO }}
+          MY_GH_PROJECT_NUMBER: ${{ secrets.MY_GH_PROJECT_NUMBER }}
+          MY_GH_PROJECT_INCIDENT_NUMBER: ${{ secrets.MY_GH_PROJECT_INCIDENT_NUMBER }}
+          MY_GH_COLUMNS: ${{ secrets.MY_GH_COLUMNS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python src/main.py --telegram
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: |
+            output/*.json
+            output/*.md
