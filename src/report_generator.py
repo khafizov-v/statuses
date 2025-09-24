@@ -96,13 +96,16 @@ class ReportGenerator:
             # Format repository names
             repo_names = ", ".join(repos_commits.keys())
 
-            # Format commit links
+            # Format commit links with branch info
             commit_links = []
             commit_count = 0
             for repo, repo_commits in repos_commits.items():
                 for commit in repo_commits:
                     if commit_count < max_commits_shown:
-                        commit_links.append(f"[{commit_count + 1}]({commit['url']})")
+                        branch_info = ""
+                        if "branch" in commit and commit["branch"] != "main" and commit["branch"] != "master":
+                            branch_info = f"@{commit['branch']}"
+                        commit_links.append(f"[{commit_count + 1}]({commit['url']}){branch_info}")
                         commit_count += 1
                     else:
                         break

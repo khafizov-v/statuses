@@ -79,8 +79,34 @@ class GitHubCollector:
         else:
             return []
 
+    def get_all_branches(self, repo: str) -> List[str]:
+        """Get all branch names for a repository"""
+        owner = self.config.github_org or self.config.github_owner
+        url = f"{self.base_url}/repos/{owner}/{repo}/branches"
+
+        all_branches = []
+        page = 1
+        per_page = 100
+
+        while True:
+            params = {"per_page": per_page, "page": page}
+            branches_data = self._make_request(url, params)
+
+            if not branches_data:
+                break
+
+            for branch in branches_data:
+                all_branches.append(branch["name"])
+
+            if len(branches_data) < per_page:
+                break
+
+            page += 1
+
+        return all_branches
+
     def get_commits_for_period(self, days_back: int = 1) -> Dict[str, List[Dict]]:
-        """Collect commits from all repositories for the specified period"""
+        """Collect commits from ALL branches of all repositories for the specified period"""
         since_date = datetime.now(timezone.utc) - timedelta(days=days_back)
         since_str = since_date.isoformat()
 
@@ -95,40 +121,57 @@ class GitHubCollector:
 
         for repo in repositories:
             repo_commits = []
-            page = 1
-            per_page = self.config.settings["github_api"]["per_page"]
 
-            while True:
-                # Use github_org if available, otherwise use github_owner
-                owner = self.config.github_org or self.config.github_owner
-                url = f"{self.base_url}/repos/{owner}/{repo}/commits"
-                params = {
-                    "since": since_str,
-                    "per_page": per_page,
-                    "page": page
-                }
+            # Get all branches for this repository
+            branches = self.get_all_branches(repo)
+            print(f"  Found {len(branches)} branches in {repo}: {', '.join(branches)}")
 
-                commits_data = self._make_request(url, params)
+            # Collect commits from each branch
+            for branch in branches:
+                page = 1
+                per_page = self.config.settings["github_api"]["per_page"]
 
-                if not commits_data:
-                    break
-
-                for commit in commits_data:
-                    commit_info = {
-                        "sha": commit["sha"],
-                        "message": commit["commit"]["message"],
-                        "author": commit["commit"]["author"]["name"],
-                        "date": commit["commit"]["author"]["date"],
-                        "url": commit["html_url"],
-                        "repository": repo
+                while True:
+                    # Use github_org if available, otherwise use github_owner
+                    owner = self.config.github_org or self.config.github_owner
+                    url = f"{self.base_url}/repos/{owner}/{repo}/commits"
+                    params = {
+                        "sha": branch,  # Specify the branch
+                        "since": since_str,
+                        "per_page": per_page,
+                        "page": page
                     }
-                    repo_commits.append(commit_info)
 
-                if len(commits_data) < per_page:
-                    break
+                    try:
+                        commits_data = self._make_request(url, params)
+                    except Exception as e:
+                        print(f"  Error fetching commits from branch {branch} in {repo}: {e}")
+                        break
 
-                page += 1
+                    if not commits_data:
+                        break
 
+                    for commit in commits_data:
+                        # Check if we already have this commit (avoid duplicates from merge commits)
+                        if not any(existing["sha"] == commit["sha"] for existing in repo_commits):
+                            commit_info = {
+                                "sha": commit["sha"],
+                                "message": commit["commit"]["message"],
+                                "author": commit["author"]["login"] if commit["author"] else commit["commit"]["author"]["name"],
+                                "date": commit["commit"]["author"]["date"],
+                                "url": commit["html_url"],
+                                "repository": repo,
+                                "branch": branch
+                            }
+                            repo_commits.append(commit_info)
+
+                    if len(commits_data) < per_page:
+                        break
+
+                    page += 1
+
+            # Sort commits by date (newest first)
+            repo_commits.sort(key=lambda x: x["date"], reverse=True)
             all_commits[repo] = repo_commits
 
         return all_commits
