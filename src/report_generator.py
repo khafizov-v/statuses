@@ -247,7 +247,7 @@ class ReportGenerator:
 
         return str(output_path)
 
-    def send_to_telegram(self, report_content: str) -> bool:
+    def send_to_telegram(self, report_content: str, file_path: str = None) -> bool:
         """Send report to Telegram if configured"""
         if not self.config.telegram_bot_token or not self.config.telegram_chat_id:
             return False
@@ -257,11 +257,14 @@ class ReportGenerator:
 
             # Truncate report for Telegram (max message length is 4096)
             max_length = 4000
-            if len(report_content) > max_length:
+            is_truncated = len(report_content) > max_length
+
+            if is_truncated:
                 truncated_content = report_content[:max_length] + "\n\n[Report truncated - see full version in file]"
             else:
                 truncated_content = report_content
 
+            # Send the text message
             url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/sendMessage"
             payload = {
                 "chat_id": self.config.telegram_chat_id,
@@ -271,8 +274,32 @@ class ReportGenerator:
 
             response = requests.post(url, json=payload)
             response.raise_for_status()
+
+            # If truncated and file path provided, send the file too
+            if is_truncated and file_path:
+                self._send_file_to_telegram(file_path)
+
             return True
 
         except Exception as e:
             print(f"Failed to send to Telegram: {e}")
+            return False
+
+    def _send_file_to_telegram(self, file_path: str) -> bool:
+        """Send file to Telegram"""
+        try:
+            import requests
+
+            url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/sendDocument"
+
+            with open(file_path, 'rb') as file:
+                files = {'document': file}
+                data = {'chat_id': self.config.telegram_chat_id}
+
+                response = requests.post(url, data=data, files=files)
+                response.raise_for_status()
+                return True
+
+        except Exception as e:
+            print(f"Failed to send file to Telegram: {e}")
             return False

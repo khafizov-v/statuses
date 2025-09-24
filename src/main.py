@@ -68,7 +68,7 @@ def main():
             # Send to Telegram if requested
             if args.telegram or config.settings["output_settings"]["send_telegram"]:
                 print("Sending report to Telegram...")
-                if generator.send_to_telegram(report_content):
+                if generator.send_to_telegram(report_content, output_path):
                     print("Report sent to Telegram successfully!")
                 else:
                     print("Failed to send report to Telegram")
