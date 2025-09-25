@@ -60,6 +60,13 @@ class Config:
         self.zulip_stream = os.getenv("ZULIP_STREAM")
         self.zulip_topic = os.getenv("ZULIP_TOPIC")
 
+        # Debug: Print Zulip configuration loading
+        print(f"Debug - Zulip config loaded:")
+        print(f"  ZULIP_EMAIL: {'✓' if self.zulip_email else '✗'}")
+        print(f"  ZULIP_KEY: {'✓' if self.zulip_key else '✗'}")
+        print(f"  ZULIP_STREAM: {'✓' if self.zulip_stream else '✗'} ({self.zulip_stream})")
+        print(f"  ZULIP_TOPIC: {'✓' if self.zulip_topic else '✗'} ({self.zulip_topic})")
+
         # Validate required configuration
         self._validate_config()
 

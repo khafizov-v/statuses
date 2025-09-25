@@ -295,6 +295,13 @@ class ReportGenerator:
 
     def send_to_zulip(self, report_content: str) -> bool:
         """Send report to Zulip as text message (never truncated)"""
+        # Debug: Print configuration status
+        print(f"Zulip config check:")
+        print(f"  Email: {'✓' if self.config.zulip_email else '✗'} {self.config.zulip_email}")
+        print(f"  Key: {'✓' if self.config.zulip_key else '✗'} {'***' if self.config.zulip_key else 'None'}")
+        print(f"  Stream: {'✓' if self.config.zulip_stream else '✗'} {self.config.zulip_stream}")
+        print(f"  Topic: {'✓' if self.config.zulip_topic else '✗'} {self.config.zulip_topic}")
+
         if not all([self.config.zulip_email, self.config.zulip_key, self.config.zulip_stream, self.config.zulip_topic]):
             print("Zulip configuration incomplete")
             return False
@@ -310,8 +317,10 @@ class ReportGenerator:
             # Extract site URL from email domain
             domain = self.config.zulip_email.split('@')[1]
             site_url = f"https://{domain}"
-
             url = f"{site_url}/api/v1/messages"
+
+            print(f"Sending to Zulip URL: {url}")
+            print(f"Stream: {self.config.zulip_stream}, Topic: {self.config.zulip_topic}")
 
             headers = {
                 "Authorization": f"Basic {encoded_credentials}",
@@ -326,10 +335,14 @@ class ReportGenerator:
             }
 
             response = requests.post(url, headers=headers, data=data)
+            print(f"Zulip response status: {response.status_code}")
+            print(f"Zulip response: {response.text}")
             response.raise_for_status()
 
             return True
 
         except Exception as e:
             print(f"Failed to send to Zulip: {e}")
+            import traceback
+            traceback.print_exc()
             return False
