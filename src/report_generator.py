@@ -41,17 +41,17 @@ class ReportGenerator:
         # Add commits section
         total_commits = sum(len(commits) for commits in commits_by_author.values())
         report += f"## Commits: {total_commits}\n"
-        report += commits_section + "\n"
+        report += commits_section + "\n\n"
+        report += "---\n\n"
 
         # Add PR section if there are PRs and it's enabled
         if prs_section and self.config.settings["report_format"]["include_pr_section"]:
-            report += "---\n\n"
             report += "## Pull Requests\n\n"
             report += prs_section
+            report += "---\n\n"
 
         # Add issues section if there are issues and it's enabled
         if issues_section and self.config.settings["report_format"]["include_case_sections"]:
-            report += "---\n\n"
             report += issues_section
 
         return report
@@ -185,7 +185,7 @@ class ReportGenerator:
         for case_key, case_issues in cases.items():
             # Case key is either "[Case Name](url)" or just repo name
             if case_key.startswith("[") and "](" in case_key:
-                section = f"## {case_key}\n\n"
+                section = f"## Case: {case_key}\n\n"
             else:
                 section = f"## Case: {case_key}\n\n"
 
@@ -212,7 +212,7 @@ class ReportGenerator:
                     author_real_name = self.username_mapping.get(author, author)
                     section += f"**{author_real_name}:** {comment_text}\n\n"
 
-            sections.append(section)
+            sections.append(section + "---\n")
 
         return "\n".join(sections)
 
