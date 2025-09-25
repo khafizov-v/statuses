@@ -21,6 +21,7 @@
     "output_settings": {
         "generate_markdown": true,
         "generate_json": false,
-        "send_telegram": false
+        "send_telegram": false,
+        "send_zulip": false
     }
 }

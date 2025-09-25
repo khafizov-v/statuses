@@ -20,6 +20,8 @@ def main():
                        help="Output filename (default: auto-generated)")
     parser.add_argument("--telegram", action="store_true",
                        help="Send report to Telegram")
+    parser.add_argument("--zulip", action="store_true",
+                       help="Send report to Zulip")
     parser.add_argument("--dry-run", action="store_true",
                        help="Print report to console without saving")
 
@@ -72,6 +74,14 @@ def main():
                     print("Report sent to Telegram successfully!")
                 else:
                     print("Failed to send report to Telegram")
+
+            # Send to Zulip if requested
+            if args.zulip or config.settings["output_settings"].get("send_zulip", False):
+                print("Sending report to Zulip...")
+                if generator.send_to_zulip(report_content):
+                    print("Report sent to Zulip successfully!")
+                else:
+                    print("Failed to send report to Zulip")
 
         # Print summary
         total_commits = sum(len(commits) for commits in commits_data.values())

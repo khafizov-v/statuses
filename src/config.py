@@ -54,6 +54,12 @@ class Config:
         self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
+        # Optional Zulip configuration
+        self.zulip_email = os.getenv("ZULIP_EMAIL")
+        self.zulip_key = os.getenv("ZULIP_KEY")
+        self.zulip_stream = os.getenv("ZULIP_STREAM")
+        self.zulip_topic = os.getenv("ZULIP_TOPIC")
+
         # Validate required configuration
         self._validate_config()
 

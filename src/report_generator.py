@@ -292,3 +292,44 @@ class ReportGenerator:
         except Exception as e:
             print(f"Failed to send file to Telegram: {e}")
             return False
+
+    def send_to_zulip(self, report_content: str) -> bool:
+        """Send report to Zulip as text message (never truncated)"""
+        if not all([self.config.zulip_email, self.config.zulip_key, self.config.zulip_stream, self.config.zulip_topic]):
+            print("Zulip configuration incomplete")
+            return False
+
+        try:
+            import requests
+            import base64
+
+            # Zulip requires basic auth with email:key encoded in base64
+            credentials = f"{self.config.zulip_email}:{self.config.zulip_key}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+            # Extract site URL from email domain
+            domain = self.config.zulip_email.split('@')[1]
+            site_url = f"https://{domain}"
+
+            url = f"{site_url}/api/v1/messages"
+
+            headers = {
+                "Authorization": f"Basic {encoded_credentials}",
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
+
+            data = {
+                "type": "stream",
+                "to": self.config.zulip_stream,
+                "subject": self.config.zulip_topic,
+                "content": report_content
+            }
+
+            response = requests.post(url, headers=headers, data=data)
+            response.raise_for_status()
+
+            return True
+
+        except Exception as e:
+            print(f"Failed to send to Zulip: {e}")
+            return False
