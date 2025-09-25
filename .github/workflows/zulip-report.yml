@@ -19,7 +19,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd status-bot
           pip install -r requirements.txt
 
       - name: Run Status Bot
@@ -36,8 +35,7 @@ jobs:
           ZULIP_STREAM: ${{ secrets.ZULIP_STREAM }}
           ZULIP_TOPIC: ${{ secrets.ZULIP_TOPIC }}
         run: |
-          cd status-bot
-          python src/main.py --zulip
+          python status-bot/src/main.py --zulip
 
       - name: Upload results
         uses: actions/upload-artifact@v4
