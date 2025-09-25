@@ -35,7 +35,7 @@ jobs:
           ZULIP_STREAM: ${{ secrets.ZULIP_STREAM }}
           ZULIP_TOPIC: ${{ secrets.ZULIP_TOPIC }}
         run: |
-          python status-bot/src/main.py --zulip
+          python src/main.py --zulip
 
       - name: Upload results
         uses: actions/upload-artifact@v4
