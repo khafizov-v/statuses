@@ -96,16 +96,13 @@ class ReportGenerator:
             # Format repository names
             repo_names = ", ".join(repos_commits.keys())
 
-            # Format commit links with branch info
+            # Format commit links as simple numbered hyperlinks
             commit_links = []
             commit_count = 0
             for repo, repo_commits in repos_commits.items():
                 for commit in repo_commits:
                     if commit_count < max_commits_shown:
-                        branch_info = ""
-                        if "branch" in commit and commit["branch"] != "main" and commit["branch"] != "master":
-                            branch_info = f"@{commit['branch']}"
-                        commit_links.append(f"[{commit_count + 1}]({commit['url']}){branch_info}")
+                        commit_links.append(f"[{commit_count + 1}]({commit['url']})")
                         commit_count += 1
                     else:
                         break
@@ -253,33 +250,25 @@ class ReportGenerator:
             return False
 
         try:
-            import requests
-
-            # Truncate report for Telegram (max message length is 4096)
-            max_length = 4000
-            is_truncated = len(report_content) > max_length
-
-            if is_truncated:
-                truncated_content = report_content[:max_length] + "\n\n[Report truncated - see full version in file]"
+            # Always send as file if file_path is provided
+            if file_path:
+                return self._send_file_to_telegram(file_path)
             else:
-                truncated_content = report_content
+                # If no file path provided, create a temporary file
+                import tempfile
+                import os
 
-            # Send the text message
-            url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/sendMessage"
-            payload = {
-                "chat_id": self.config.telegram_chat_id,
-                "text": truncated_content,
-                "parse_mode": "Markdown"
-            }
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as temp_file:
+                    temp_file.write(report_content)
+                    temp_file_path = temp_file.name
 
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
+                try:
+                    result = self._send_file_to_telegram(temp_file_path)
+                finally:
+                    # Clean up temporary file
+                    os.unlink(temp_file_path)
 
-            # If truncated and file path provided, send the file too
-            if is_truncated and file_path:
-                self._send_file_to_telegram(file_path)
-
-            return True
+                return result
 
         except Exception as e:
             print(f"Failed to send to Telegram: {e}")
