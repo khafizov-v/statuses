@@ -14,8 +14,8 @@ from report_generator import ReportGenerator
 
 def main():
     parser = argparse.ArgumentParser(description="Generate status reports from GitHub activity")
-    parser.add_argument("--days", type=int, default=1,
-                       help="Number of days back to collect data (default: 1)")
+    parser.add_argument("--days", type=int, default=None,
+                       help="Number of days back to collect data (default: auto-detect based on weekday)")
     parser.add_argument("--output", type=str,
                        help="Output filename (default: auto-generated)")
     parser.add_argument("--telegram", action="store_true",
@@ -26,6 +26,15 @@ def main():
                        help="Print report to console without saving")
 
     args = parser.parse_args()
+
+    # Auto-detect days based on weekday if not specified
+    if args.days is None:
+        today = datetime.now()
+        weekday = today.weekday()  # Monday=0, Sunday=6
+        if weekday == 0:  # Monday
+            args.days = 3  # Collect Saturday, Sunday, Monday
+        else:
+            args.days = 1  # Regular single day
 
     try:
         # Initialize configuration

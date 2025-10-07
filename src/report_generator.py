@@ -134,13 +134,14 @@ class ReportGenerator:
                     author_real_name = self.username_mapping.get(author, author)
                     section += f"**{author_real_name}:** Sent PR to review\n\n"
                 elif pr["comments"]:
-                    # Add PR comments
-                    for comment in pr["comments"]:
+                    # Add PR comments (sorted by date)
+                    sorted_comments = sorted(pr["comments"], key=lambda x: x["created_at"])
+                    for comment in sorted_comments:
                         # Format comment with author
                         comment_text = self._format_comment(comment["body"])
                         author = comment["author"]
                         author_real_name = self.username_mapping.get(author, author)
-                        section += f"**{author_real_name}:** {comment_text}\n\n"
+                        section += f"**{author_real_name}:**\n{comment_text}\n\n"
                 else:
                     # Skip PRs that have neither recent creation nor comments
                     continue
@@ -204,13 +205,14 @@ class ReportGenerator:
 
                 section += f"### [{issue['title']}]({issue['url']}){assignee_str}\n"
 
-                # Add issue comments
-                for comment in issue["comments"]:
+                # Add issue comments (sorted by date)
+                sorted_comments = sorted(issue["comments"], key=lambda x: x["created_at"])
+                for comment in sorted_comments:
                     comment_text = self._format_comment(comment["body"])
                     author = comment["author"]
                     # Map comment author to real name too
                     author_real_name = self.username_mapping.get(author, author)
-                    section += f"**{author_real_name}:** {comment_text}\n\n"
+                    section += f"**{author_real_name}:**\n{comment_text}\n\n"
 
             sections.append(section + "---\n")
 
@@ -225,6 +227,12 @@ class ReportGenerator:
         max_length = 500
         if len(comment) > max_length:
             comment = comment[:max_length] + "..."
+
+        # Replace triple backticks with single backtick to avoid formatting issues
+        comment = comment.replace('```', '`')
+
+        # Format as blockquote citation
+        comment = '\n'.join(f"> {line}" for line in comment.split('\n'))
 
         return comment
 
