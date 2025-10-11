@@ -4,6 +4,7 @@ import sys
 import argparse
 from pathlib import Path
 from datetime import datetime
+import pytz
 
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -16,6 +17,10 @@ def main():
     parser = argparse.ArgumentParser(description="Generate status reports from GitHub activity")
     parser.add_argument("--days", type=int, default=None,
                        help="Number of days back to collect data (default: auto-detect based on weekday)")
+    parser.add_argument("--start-time", type=str,
+                       help="Start time in format 'YYYY-MM-DD HH:MM' (Moscow time)")
+    parser.add_argument("--end-time", type=str,
+                       help="End time in format 'YYYY-MM-DD HH:MM' (Moscow time)")
     parser.add_argument("--output", type=str,
                        help="Output filename (default: auto-generated)")
     parser.add_argument("--telegram", action="store_true",
@@ -27,8 +32,23 @@ def main():
 
     args = parser.parse_args()
 
-    # Auto-detect days based on weekday if not specified
-    if args.days is None:
+    # Parse exact time range if provided
+    start_time = None
+    end_time = None
+    moscow_tz = pytz.timezone('Europe/Moscow')
+
+    if args.start_time and args.end_time:
+        try:
+            # Parse times in Moscow timezone
+            start_time = moscow_tz.localize(datetime.strptime(args.start_time, '%Y-%m-%d %H:%M'))
+            end_time = moscow_tz.localize(datetime.strptime(args.end_time, '%Y-%m-%d %H:%M'))
+            print(f"Using exact time range: {start_time} to {end_time} (Moscow time)")
+        except ValueError as e:
+            print(f"Error parsing time: {e}")
+            print("Use format: 'YYYY-MM-DD HH:MM'")
+            sys.exit(1)
+    elif args.days is None:
+        # Auto-detect days based on weekday if not specified
         today = datetime.now()
         weekday = today.weekday()  # Monday=0, Sunday=6
         if weekday == 0:  # Monday
@@ -49,20 +69,37 @@ def main():
         generator = ReportGenerator(config)
 
         # Collect data
-        print(f"Collecting data for the last {args.days} day(s)...")
+        if start_time and end_time:
+            print(f"Collecting data from {start_time} to {end_time}...")
 
-        print("- Collecting commits...")
-        commits_data = collector.get_commits_for_period(args.days)
+            print("- Collecting commits...")
+            commits_data = collector.get_commits_for_exact_period(start_time, end_time)
 
-        print("- Collecting pull requests...")
-        prs_data = collector.get_pull_requests_for_period(args.days)
+            print("- Collecting pull requests...")
+            prs_data = collector.get_pull_requests_for_exact_period(start_time, end_time)
 
-        print("- Collecting issues...")
-        issues_data = collector.get_issues_for_period(args.days)
+            print("- Collecting issues...")
+            issues_data = collector.get_issues_for_exact_period(start_time, end_time)
+        else:
+            print(f"Collecting data for the last {args.days} day(s)...")
+
+            print("- Collecting commits...")
+            commits_data = collector.get_commits_for_period(args.days)
+
+            print("- Collecting pull requests...")
+            prs_data = collector.get_pull_requests_for_period(args.days)
+
+            print("- Collecting issues...")
+            issues_data = collector.get_issues_for_period(args.days)
 
         # Generate report
         print("Generating report...")
-        report_content = generator.generate_report(commits_data, prs_data, issues_data)
+        if start_time and end_time:
+            # Use end date for report title in format: October 10, 2025
+            report_date = end_time.strftime('%B %d, %Y')
+            report_content = generator.generate_report(commits_data, prs_data, issues_data, report_date)
+        else:
+            report_content = generator.generate_report(commits_data, prs_data, issues_data)
 
         # Output results
         if args.dry_run:

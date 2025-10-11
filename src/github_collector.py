@@ -448,8 +448,15 @@ class GitHubCollector:
         labels = issue.get("labels", [])
         if isinstance(labels, dict) and "nodes" in labels:
             labels = labels["nodes"]
-        if any(label.get("name", "").lower() == "case" for label in labels):
-            return issue
+
+        # Handle both string labels and dict labels
+        for label in labels:
+            if isinstance(label, str):
+                if label.lower() == "case":
+                    return issue
+            elif isinstance(label, dict):
+                if label.get("name", "").lower() == "case":
+                    return issue
 
         # Get parent issue using REST API
         issue_url = issue.get("url")
@@ -614,3 +621,301 @@ class GitHubCollector:
             commits_by_author[author].sort(key=lambda x: x["date"], reverse=True)
 
         return commits_by_author
+
+    # === Methods for exact time period collection ===
+
+    def get_commits_for_exact_period(self, start_time: datetime, end_time: datetime) -> Dict[str, List[Dict]]:
+        """Collect commits from ALL branches of all repositories for the EXACT time period"""
+        # Convert to UTC for API calls
+        start_utc = start_time.astimezone(timezone.utc)
+        end_utc = end_time.astimezone(timezone.utc)
+        since_str = start_utc.isoformat()
+
+        all_commits = {}
+
+        # Get repositories to process
+        if self.config.repositories is None:
+            repositories = self.get_org_repositories()
+        else:
+            repositories = self.config.repositories
+
+        for repo in repositories:
+            repo_commits = []
+
+            # Get all branches for this repository
+            branches = self.get_all_branches(repo)
+            print(f"  Found {len(branches)} branches in {repo}")
+
+            # Collect commits from each branch
+            for branch in branches:
+                page = 1
+                per_page = self.config.settings["github_api"]["per_page"]
+
+                while True:
+                    owner = self.config.github_org or self.config.github_owner
+                    url = f"{self.base_url}/repos/{owner}/{repo}/commits"
+                    params = {
+                        "sha": branch,
+                        "since": since_str,
+                        "per_page": per_page,
+                        "page": page
+                    }
+
+                    try:
+                        commits_data = self._make_request(url, params)
+                    except Exception as e:
+                        print(f"  Error fetching commits from branch {branch} in {repo}: {e}")
+                        break
+
+                    if not commits_data:
+                        break
+
+                    for commit in commits_data:
+                        commit_date = datetime.fromisoformat(commit["commit"]["author"]["date"].replace('Z', '+00:00'))
+
+                        # EXACT filtering: only include if within start_time <= commit_date <= end_time
+                        if start_utc <= commit_date <= end_utc:
+                            # Check if we already have this commit (avoid duplicates from merge commits)
+                            if not any(existing["sha"] == commit["sha"] for existing in repo_commits):
+                                commit_info = {
+                                    "sha": commit["sha"],
+                                    "message": commit["commit"]["message"],
+                                    "author": commit["author"]["login"] if commit["author"] else commit["commit"]["author"]["name"],
+                                    "date": commit["commit"]["author"]["date"],
+                                    "url": commit["html_url"],
+                                    "repository": repo,
+                                    "branch": branch
+                                }
+                                repo_commits.append(commit_info)
+
+                    # Stop if we've gone past the end_time
+                    if commits_data and all(
+                        datetime.fromisoformat(c["commit"]["author"]["date"].replace('Z', '+00:00')) > end_utc
+                        for c in commits_data
+                    ):
+                        break
+
+                    if len(commits_data) < per_page:
+                        break
+
+                    page += 1
+
+            # Sort commits by date (newest first)
+            repo_commits.sort(key=lambda x: x["date"], reverse=True)
+            all_commits[repo] = repo_commits
+
+        return all_commits
+
+    def get_pull_requests_for_exact_period(self, start_time: datetime, end_time: datetime) -> Dict[str, List[Dict]]:
+        """Collect pull requests and their comments for the EXACT time period"""
+        start_utc = start_time.astimezone(timezone.utc)
+        end_utc = end_time.astimezone(timezone.utc)
+
+        all_prs = {}
+
+        # Get repositories to process
+        if self.config.repositories is None:
+            repositories = self.get_org_repositories()
+        else:
+            repositories = self.config.repositories
+
+        for repo in repositories:
+            repo_prs = []
+
+            # Get pull requests
+            owner = self.config.github_org or self.config.github_owner
+            url = f"{self.base_url}/repos/{owner}/{repo}/pulls"
+            params = {
+                "state": "all",
+                "sort": "updated",
+                "direction": "desc",
+                "per_page": self.config.settings["github_api"]["per_page"]
+            }
+
+            prs_data = self._make_request(url, params)
+
+            for pr in prs_data:
+                pr_updated = datetime.fromisoformat(pr["updated_at"].replace('Z', '+00:00'))
+
+                # Skip if updated before our time window
+                if pr_updated < start_utc:
+                    continue
+
+                # Get PR comments (filtered by exact time range)
+                comments = self._get_pr_comments_exact(repo, pr["number"], start_utc, end_utc)
+
+                # Check if PR was created in the time window (sent to review)
+                pr_created = datetime.fromisoformat(pr["created_at"].replace('Z', '+00:00'))
+                recently_created = start_utc <= pr_created <= end_utc
+
+                # Include PRs that either have comments in time range OR were created in time range
+                if comments or recently_created:
+                    pr_info = {
+                        "number": pr["number"],
+                        "title": pr["title"],
+                        "url": pr["html_url"],
+                        "state": pr["state"],
+                        "author": pr["user"]["login"],
+                        "created_at": pr["created_at"],
+                        "updated_at": pr["updated_at"],
+                        "comments": comments,
+                        "repository": repo,
+                        "recently_created": recently_created
+                    }
+                    repo_prs.append(pr_info)
+
+            all_prs[repo] = repo_prs
+
+        return all_prs
+
+    def _get_pr_comments_exact(self, repo: str, pr_number: int, start_time: datetime, end_time: datetime) -> List[Dict]:
+        """Get comments for a specific pull request within exact time range"""
+        comments = []
+
+        # Get issue comments (PR comments in issues API)
+        owner = self.config.github_org or self.config.github_owner
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        comments_data = self._make_request(url)
+
+        for comment in comments_data:
+            comment_date = datetime.fromisoformat(comment["created_at"].replace('Z', '+00:00'))
+            if start_time <= comment_date <= end_time:
+                comments.append({
+                    "id": comment["id"],
+                    "author": comment["user"]["login"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "url": comment["html_url"],
+                    "type": "issue_comment"
+                })
+
+        # Get review comments (code review comments)
+        url = f"{self.base_url}/repos/{owner}/{repo}/pulls/{pr_number}/comments"
+        review_comments_data = self._make_request(url)
+
+        for comment in review_comments_data:
+            comment_date = datetime.fromisoformat(comment["created_at"].replace('Z', '+00:00'))
+            if start_time <= comment_date <= end_time:
+                comments.append({
+                    "id": comment["id"],
+                    "author": comment["user"]["login"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "url": comment["html_url"],
+                    "type": "review_comment",
+                    "path": comment.get("path"),
+                    "line": comment.get("line")
+                })
+
+        return sorted(comments, key=lambda x: x["created_at"])
+
+    def get_issues_for_exact_period(self, start_time: datetime, end_time: datetime) -> Dict[str, List[Dict]]:
+        """Collect issues and their comments for the EXACT time period"""
+        start_utc = start_time.astimezone(timezone.utc)
+        end_utc = end_time.astimezone(timezone.utc)
+
+        all_issues = {}
+
+        # If project filtering is configured, use project-based collection
+        if self.config.project_number and self.config.columns:
+            print(f"  Filtering by project {self.config.project_number} columns: {', '.join(self.config.columns)}")
+
+            # Get issues from project columns
+            project_issues = self.get_project_issues_in_columns(self.config.project_number, self.config.columns)
+
+            # Also check incident project if configured
+            if self.config.incident_project_number:
+                incident_issues = self.get_project_issues_in_columns(self.config.incident_project_number, self.config.columns)
+                project_issues.extend(incident_issues)
+
+            # Group by repository and filter by exact date range
+            for issue in project_issues:
+                repo = issue["repository"]
+                issue_updated = datetime.fromisoformat(issue["updated_at"].replace('Z', '+00:00'))
+
+                if issue_updated >= start_utc:
+                    # Get comments for this issue (filtered by exact time range)
+                    comments = self._get_issue_comments_exact(repo, issue["number"], start_utc, end_utc)
+
+                    if comments:  # Only include issues with comments in time range
+                        issue["comments"] = comments
+
+                        if repo not in all_issues:
+                            all_issues[repo] = []
+                        all_issues[repo].append(issue)
+
+            return all_issues
+
+        # Fallback to original method if no project filtering
+        if self.config.repositories is None:
+            repositories = self.get_org_repositories()
+        else:
+            repositories = self.config.repositories
+
+        for repo in repositories:
+            repo_issues = []
+
+            # Get issues
+            owner = self.config.github_org or self.config.github_owner
+            url = f"{self.base_url}/repos/{owner}/{repo}/issues"
+            params = {
+                "state": "all",
+                "sort": "updated",
+                "direction": "desc",
+                "per_page": self.config.settings["github_api"]["per_page"]
+            }
+
+            issues_data = self._make_request(url, params)
+
+            for issue in issues_data:
+                # Skip pull requests
+                if "pull_request" in issue:
+                    continue
+
+                issue_updated = datetime.fromisoformat(issue["updated_at"].replace('Z', '+00:00'))
+                if issue_updated < start_utc:
+                    continue
+
+                # Get issue comments (filtered by exact time range)
+                comments = self._get_issue_comments_exact(repo, issue["number"], start_utc, end_utc)
+
+                if comments:  # Only include issues with comments in time range
+                    issue_info = {
+                        "number": issue["number"],
+                        "title": issue["title"],
+                        "url": issue["html_url"],
+                        "state": issue["state"],
+                        "author": issue["user"]["login"],
+                        "created_at": issue["created_at"],
+                        "updated_at": issue["updated_at"],
+                        "comments": comments,
+                        "repository": repo,
+                        "labels": [label["name"] for label in issue["labels"]],
+                        "assignees": [assignee["login"] for assignee in issue.get("assignees", [])]
+                    }
+                    repo_issues.append(issue_info)
+
+            all_issues[repo] = repo_issues
+
+        return all_issues
+
+    def _get_issue_comments_exact(self, repo: str, issue_number: int, start_time: datetime, end_time: datetime) -> List[Dict]:
+        """Get comments for a specific issue within exact time range"""
+        comments = []
+
+        owner = self.config.github_org or self.config.github_owner
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/{issue_number}/comments"
+        comments_data = self._make_request(url)
+
+        for comment in comments_data:
+            comment_date = datetime.fromisoformat(comment["created_at"].replace('Z', '+00:00'))
+            if start_time <= comment_date <= end_time:
+                comments.append({
+                    "id": comment["id"],
+                    "author": comment["user"]["login"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "url": comment["html_url"]
+                })
+
+        return sorted(comments, key=lambda x: x["created_at"])
